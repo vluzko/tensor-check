@@ -1,0 +1,1 @@
+s = open('test_file.py', 'r').read()

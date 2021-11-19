@@ -1,0 +1,13 @@
+[project]
+name = "mat-dim-checker"
+version = "0.1.0"
+description = "Matrix dimension checking with refinement types"
+authors = [
+    "Vincent Luczkow"
+]
+license = "MIT"
+python = "^3.6"
+
+[dependencies]
+
+[dev-dependencies]

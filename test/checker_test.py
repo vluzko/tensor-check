@@ -1,0 +1,1 @@
+from dim_checker import checker

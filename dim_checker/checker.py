@@ -1,6 +1,7 @@
 import ast
 import pdb
-from typing import Any, Tuple, Literal, List, Dict, Union
+from typing import Any, Tuple, Literal, List, Dict, Union, Optional
+
 
 
 # TODO: Broadcasting
@@ -30,11 +31,44 @@ class TensorType:
         return self.__mul__(other)
 
 
+def broadcast(type_1: TensorType, type_2: TensorType) -> Optional[TensorType]:
+    # Arrange by length
+    if len(type_1.shape) > len(type_2.shape):
+        t1, t2 = type_1, type_2
+    else:
+        t1, t2 = type_2, type_1
+
+    new_shape = []
+    for i in range(len(t2.shape)):
+        if t2.shape[-i] == t1.shape[-i]:
+            new_shape.append(t2.shape[-i])
+        elif t2.shape[-i] == 1:
+            new_shape.append(t1.shape[-i])
+        elif t1.shape[-i] == 1:
+            new_shape.append(t2.shape[-i])
+        else:
+            return None
+    for j in range(len(t2.shape), len(t1.shape)):
+        new_shape.append(t1.shape[-j])
+
+    final_shape = tuple(reversed(new_shape))
+    return TensorType(final_shape)
+
+
 AllowedTypes = Union[TensorType, int, float, bool]
+
+
+class Scope:
+    assignments: Dict[str, AllowedTypes]
+
+    def __init__(self, assigments: Dict[str, AllowedTypes] = {}):
+        self.assignments = assigments
+
 
 # TODO: Different scopes
 class Context:
     assignments: Dict[str, AllowedTypes]
+    scopes: Dict[int, Scope]
 
     def __init__(self):
         self.assignments = {}
@@ -44,6 +78,9 @@ class Context:
 
     def __setitem__(self, key, value):
         self.assignments[key] = value
+
+    def new_scope(self):
+        self.scopes[len(self.scopes)] = Scope()
 
 
 # TODO: Imports
@@ -119,6 +156,22 @@ def constructor(args) -> TensorType:
         raise TypeError
 
 
+def arange_type(args) -> TensorType:
+    size = int((args[1] - args[0]) / args[2])
+    return TensorType((size, ))
+
+
+def range_type(args) -> TensorType:
+    size = int((args[1] - args[0]) / args[2]) + 1
+    return TensorType((size, ))
+
+
+def eye_type(args) -> TensorType:
+    if args[1] is None:
+        return TensorType((args[0], args[0]))
+    else:
+        return TensorType((args[0], args[1]))
+
 def check(contents: str):
     tree = ast.parse(contents)
     TorchChecker().visit(tree)
@@ -127,4 +180,7 @@ def check(contents: str):
 METHOD_MAP = {
     'zeros': constructor,
     'ones': constructor,
+    'arange': arange_type,
+    'range': range_type,
+    'eye': eye_type,
 }

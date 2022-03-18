@@ -1,45 +1,92 @@
 import ast
 import pdb
-from typing import Any, Tuple, Literal, List, Dict, Union
+from typing import Any, Tuple, List, Dict, Union, Optional
 
 
-# TODO: Broadcasting
-class TensorType:
+class Allowed:
+    pass
+
+    def __add__(self, other):
+        raise NotImplementedError
+
+    def __radd__(self, other):
+        raise NotImplementedError
+
+
+class InternalInt(Allowed):
+    def __add__(self, other: Allowed):
+        if isinstance(other, InternalInt):
+            return InternalInt
+        elif isinstance(other, InternalFloat):
+            return InternalFloat
+        elif isinstance(other, InternalTensor):
+            return other
+        else:
+            raise TypeError
+
+
+class InternalFloat(Allowed):
+
+    def __add__(self, other: Allowed):
+        if isinstance(other, InternalFloat):
+            return InternalFloat
+        elif isinstance(other, InternalInt):
+            return InternalFloat
+        elif isinstance(other, InternalTensor):
+            return other
+        else:
+            raise TypeError
+
+
+class InternalTensor(Allowed):
     shape: Tuple[int, ...]
 
     def __init__(self, shape: Tuple[int, ...]):
         self.shape = shape
 
-    def __add__(self, other: 'TensorType'):
+    def __add__(self, other: 'InternalTensor'):
         if self.shape == other.shape:
-            return TensorType(self.shape)
+            return InternalTensor(self.shape)
         else:
             raise TypeError
 
-    def __sub__(self, other: 'TensorType'):
+    def __sub__(self, other: 'InternalTensor'):
         return self.__add__(other)
 
-    def __mul__(self, other: 'TensorType'):
+    def __mul__(self, other: 'InternalTensor'):
         # Only implemented for two dimensions
         if len(self.shape) == 2 and len(other.shape) == 2 and self.shape[1] == other.shape[0]:
-            return TensorType((self.shape[0], other.shape[1]))
+            return InternalTensor((self.shape[0], other.shape[1]))
         else:
             raise TypeError
 
-    def __truediv__(self, other: 'TensorType'):
+    def __truediv__(self, other: 'InternalTensor'):
         return self.__mul__(other)
 
 
-AllowedTypes = Union[TensorType, int, float, bool]
+class Predicate:
+    pass
+
+
+class Refinement(Allowed):
+
+    predicates: List[Predicate]
+
+
+class Scope:
+    parent: Optional['Scope']
+
 
 # TODO: Different scopes
 class Context:
-    assignments: Dict[str, AllowedTypes]
+    assignments: Dict[str, Allowed]
+    scopes: List[Scope]
 
     def __init__(self):
         self.assignments = {}
+        self.scopes = []
 
-    def __getitem__(self, key: str) -> AllowedTypes:
+    def __getitem__(self, key: str) -> Allowed:
         return self.assignments[key]
 
     def __setitem__(self, key, value):
@@ -53,13 +100,18 @@ class TorchChecker(ast.NodeTransformer):
         super().__init__()
         self.context = Context()
 
-    def get_type(self, node):
+    def get_type(self, node: ast.AST) -> Allowed:
         if isinstance(node, ast.Name):
             return self.context[node.id]
+        elif isinstance(node, ast.Constant):
+            try:
+                return CONSTANT_TYPE_MAP[type(node.value)]()
+            except KeyError:
+                return type(node.value)
         else:
             return node._tensor_type
 
-    def visit_Call(self, node):
+    def visit_Call(self, node: ast.Call) -> ast.Call:
         # Check if we're calling torch
         if node.func.value.id != 'torch':
             return node
@@ -72,14 +124,14 @@ class TorchChecker(ast.NodeTransformer):
             node._tensor_type = tensor_type
             return node
 
-    def visit_Assign(self, node):
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
         expr = self.visit(node.value)
         assert len(node.targets) == 1
         name = node.targets[0].id
         self.context[name] = expr._tensor_type
         return node
 
-    def visit_BinOp(self, node):
+    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
         left_type = self.get_type(node.left)
         right_type = self.get_type(node.right)
 
@@ -98,6 +150,13 @@ class TorchChecker(ast.NodeTransformer):
         node._tensor_type = new_type
         return node
 
+    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
+        try:
+            node._tensor_type = CONSTANT_TYPE_MAP[type(node.value)]()
+        except KeyError:
+            node._tensor_type = type(node.value)
+        return node
+
 
 def get_arg(arg: ast.expr) -> Any:
 
@@ -109,19 +168,28 @@ def get_arg(arg: ast.expr) -> Any:
     return result
 
 
-def constructor(args) -> TensorType:
+def constructor(args) -> InternalTensor:
     shape_arg = args[0]
     if isinstance(shape_arg, tuple):
-        return TensorType(shape_arg)
+        return InternalTensor(shape_arg)
     elif isinstance(shape_arg, int):
-        return TensorType((shape_arg, ))
+        return InternalTensor((shape_arg, ))
     else:
         raise TypeError
 
 
 def check(contents: str):
     tree = ast.parse(contents)
-    TorchChecker().visit(tree)
+    checker = TorchChecker()
+    result = checker.visit(tree)
+    import pdb
+    pdb.set_trace()
+
+
+CONSTANT_TYPE_MAP = {
+    int: InternalInt,
+    float: InternalFloat
+}
 
 
 METHOD_MAP = {

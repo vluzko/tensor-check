@@ -1,79 +1,33 @@
 import ast
-import pdb
-from typing import Any, Tuple, Literal, List, Dict, Union, Optional
+from typing import Dict, Optional, Any
 
-
-
-# TODO: Broadcasting
-class TensorType:
-    shape: Tuple[int, ...]
-
-    def __init__(self, shape: Tuple[int, ...]):
-        self.shape = shape
-
-    def __add__(self, other: 'TensorType'):
-        if self.shape == other.shape:
-            return TensorType(self.shape)
-        else:
-            raise TypeError
-
-    def __sub__(self, other: 'TensorType'):
-        return self.__add__(other)
-
-    def __mul__(self, other: 'TensorType'):
-        # Only implemented for two dimensions
-        if len(self.shape) == 2 and len(other.shape) == 2 and self.shape[1] == other.shape[0]:
-            return TensorType((self.shape[0], other.shape[1]))
-        else:
-            raise TypeError
-
-    def __truediv__(self, other: 'TensorType'):
-        return self.__mul__(other)
-
-
-def broadcast(type_1: TensorType, type_2: TensorType) -> Optional[TensorType]:
-    # Arrange by length
-    if len(type_1.shape) > len(type_2.shape):
-        t1, t2 = type_1, type_2
-    else:
-        t1, t2 = type_2, type_1
-
-    new_shape = []
-    for i in range(len(t2.shape)):
-        if t2.shape[-i] == t1.shape[-i]:
-            new_shape.append(t2.shape[-i])
-        elif t2.shape[-i] == 1:
-            new_shape.append(t1.shape[-i])
-        elif t1.shape[-i] == 1:
-            new_shape.append(t2.shape[-i])
-        else:
-            return None
-    for j in range(len(t2.shape), len(t1.shape)):
-        new_shape.append(t1.shape[-j])
-
-    final_shape = tuple(reversed(new_shape))
-    return TensorType(final_shape)
-
-
-AllowedTypes = Union[TensorType, int, float, bool]
+from dim_checker.types import ChkType, InternalInt, InternalFloat, InternalTensor, Function, ModuleDef, ModuleObj, NoneType
 
 
 class Scope:
-    assignments: Dict[str, AllowedTypes]
-
-    def __init__(self, assigments: Dict[str, AllowedTypes] = {}):
-        self.assignments = assigments
+    assignments: Dict[str, ChkType]
+    parent: Optional['Scope']
 
 
 # TODO: Different scopes
 class Context:
-    assignments: Dict[str, AllowedTypes]
+    assignments: Dict[str, ChkType]
     scopes: Dict[int, Scope]
+    node_types: Dict[ast.AST, ChkType]
 
     def __init__(self):
+        self.imports = []
         self.assignments = {}
+        self.scopes = {}
+        self.node_types = {}
 
-    def __getitem__(self, key: str) -> AllowedTypes:
+    def add_type(self, node: ast.AST, node_type: ChkType):
+        self.node_types[node] = node_type
+
+    def get_type(self, node: ast.AST) -> ChkType:
+        return self.node_types[node]
+
+    def __getitem__(self, key: str) -> ChkType:
         return self.assignments[key]
 
     def __setitem__(self, key, value):
@@ -81,6 +35,9 @@ class Context:
 
     def new_scope(self):
         self.scopes[len(self.scopes)] = Scope()
+
+    def lookup_name(self, node: ast.Name):
+        pass
 
 
 # TODO: Imports
@@ -90,15 +47,136 @@ class TorchChecker(ast.NodeTransformer):
         super().__init__()
         self.context = Context()
 
-    def get_type(self, node):
+    def get_type(self, node: ast.AST) -> ChkType:
         if isinstance(node, ast.Name):
             return self.context[node.id]
+        elif isinstance(node, ast.Constant):
+            try:
+                return CONSTANT_TYPE_MAP[type(node.value)]()
+            except KeyError:
+                return type(node.value)
         else:
-            return node._tensor_type
+            return self.context.get_type(node)
 
-    def visit_Call(self, node):
+    def visit_Import(self, node: ast.Import) -> Any:
+        # TODO: Import types for all imported modules
+        return node
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
+        if node.module == 'torch':
+            # TODO: Import types for all imported modules
+            # TODO: Remap aliases (`node.names[i].asname`)
+            self.context.imports.extend(node.names)
+        return node
+
+    def visit_Init(self, node: ast.FunctionDef) -> Any:
+        attributes = {}
+        for stmt in node.body:
+            self.visit(stmt)
+            if isinstance(stmt, ast.Assign):
+                # TODO: Handle multiple targets (probably not)
+                if len(stmt.targets) == 1:
+                    target = stmt.targets[0]
+                    # TODO: Allow other kinds of assignment
+                    assert isinstance(target, ast.Attribute)
+                    assert isinstance(target.value, ast.Name)
+                    if target.value.id == 'self':
+                        attributes[target.attr] = NoneType()
+        return node, attributes
+
+    def visit_MethodDef(self, node: ast.FunctionDef) -> Any:
+        ret_types = []
+        for stmt in node.body:
+            self.visit(stmt)
+            if isinstance(stmt, ast.Return):
+                ret_types.append(self.get_type(stmt))
+            print(stmt)
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
+        ret_types = []
+        for stmt in node.body:
+            self.visit(stmt)
+            if isinstance(stmt, ast.Return):
+                ret_types.append(self.get_type(stmt))
+            print(stmt)
+
+        self.context.add_type(node, Function([], ret_types))
+        return node
+
+    def visit_Return(self, node: ast.Return) -> Any:
+        if node.value is not None:
+            import pdb
+            pdb.set_trace()
+            self.visit(node.value)
+            self.context.add_type(node, self.get_type(node.value))
+        return node
+
+    # TODO: decorator_list
+    # TODO: keywords
+    def visit_ClassDef(self, node: ast.ClassDef) -> Any:
+        is_module = False
+        for base in node.bases:
+            if isinstance(base, ast.AST):
+                self.visit(base)
+            # TODO: Handle import aliases and shadowing
+            if isinstance(base, ast.Attribute) and base.attr == 'Module' and isinstance(base.value, ast.Name) and base.value.id == 'nn':
+                is_module = True
+
+        # Check the __init__ type first
+        attrs = {}
+        for val in node.body:
+            if isinstance(val, ast.FunctionDef) and val.name == '__init__':
+                init_node, attrs = self.visit_Init(val)
+
+        class_type = ModuleDef(attrs, NoneType())
+        self.context.add_type(node, class_type)
+        self.context['self'] = class_type
+
+        for val in node.body:
+            if isinstance(val, ast.FunctionDef):
+                # We don't check __init__ again
+                if val.name == '__init__':
+                    continue
+                # For now, no support for decorators. General decorators are unlikely to ever be supported
+                # TODO: classmethods (maybe)
+                # TODO: staticmethods (maybe)
+                elif len(val.decorator_list) > 0:
+                    continue
+                else:
+                    # TODO: Create separate `self` scopes for methods
+                    self.visit_MethodDef(val)
+                # We hard code the fact that `forward` is called by `__call__` for torch modules.
+                if is_module and val.name == 'forward':
+                    import pdb
+                    pdb.set_trace()
+            else:
+                self.visit(val)
+
+        return node
+
+    def visit_Call(self, node) -> ast.Call:
+        for arg in node.args:
+            self.visit(arg)
+        self.visit(node.func)
+
+        # arg_types = [self.get_type(arg) for arg in node.args]
+
+        print(node)
+        # Special case super
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call) and node.func.value.func.id == 'super':  # type: ignore
+            print(node.func.attr)
+            return node
+        elif isinstance(node.func, ast.Attribute):
+            t = self.context.lookup_name(node.func.value)
+            return node
         # Check if we're calling torch
-        if node.func.value.id != 'torch':
+        elif isinstance(node.func, ast.Name):
+            t = self.context.lookup_name(node)
+            return node
+        elif node.func.value.id != 'torch':
+            import pdb
+            pdb.set_trace()
             return node
         else:
             torch_method = node.func.attr
@@ -106,17 +184,24 @@ class TorchChecker(ast.NodeTransformer):
 
             method = METHOD_MAP[torch_method]
             tensor_type = method(parsed_args)
-            node._tensor_type = tensor_type
+            self.context.add_type(node, tensor_type)
             return node
 
-    def visit_Assign(self, node):
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
+        for target in node.targets:
+            self.visit(target)
         expr = self.visit(node.value)
         assert len(node.targets) == 1
-        name = node.targets[0].id
-        self.context[name] = expr._tensor_type
-        return node
+        if isinstance(node.targets[0], ast.Attribute):
+            return node
+        else:
+            assert isinstance(node.targets[0], ast.Name)
+            name = node.targets[0].id
+            self.context[name] = self.context.get_type(expr)
+            return node
 
-    def visit_BinOp(self, node):
+    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
+        super().visit(node)
         left_type = self.get_type(node.left)
         right_type = self.get_type(node.right)
 
@@ -129,10 +214,35 @@ class TorchChecker(ast.NodeTransformer):
         elif isinstance(node.op, ast.Div):
             new_type = left_type / right_type
         else:
-            # pdb.set_trace()
             raise TypeError
 
-        node._tensor_type = new_type
+        self.context.add_type(node, new_type)
+        return node
+
+    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
+        try:
+            node_type = CONSTANT_TYPE_MAP[type(node.value)]()
+            self.context.add_type(node, node_type)
+        except KeyError:
+            self.context.add_type(node, type(node.value))
+        return node
+
+    def visit_Name(self, node: ast.Name):
+        if node.id in self.context.assignments:
+            self.context.add_type(node, self.context.assignments[node.id])
+        return node
+
+    def visit_Attribute(self, node: ast.Attribute):
+        super().visit(node.ctx)
+        super().visit(node.value)
+        try:
+            # TODO: This shouldn't be special cased
+            if isinstance(node.value, ast.Name):
+                obj_type = self.context[node.value.id]
+                attr_type = obj_type.attributes[node.attr]
+                self.context.add_type(node, attr_type)
+        except KeyError:
+            pass
         return node
 
 
@@ -146,35 +256,42 @@ def get_arg(arg: ast.expr) -> Any:
     return result
 
 
-def constructor(args) -> TensorType:
+def constructor(args) -> InternalTensor:
     shape_arg = args[0]
     if isinstance(shape_arg, tuple):
-        return TensorType(shape_arg)
+        return InternalTensor(shape_arg)
     elif isinstance(shape_arg, int):
-        return TensorType((shape_arg, ))
+        return InternalTensor((shape_arg, ))
     else:
         raise TypeError
 
 
-def arange_type(args) -> TensorType:
+def arange_type(args) -> InternalTensor:
     size = int((args[1] - args[0]) / args[2])
-    return TensorType((size, ))
+    return InternalTensor((size, ))
 
 
-def range_type(args) -> TensorType:
+def range_type(args) -> InternalTensor:
     size = int((args[1] - args[0]) / args[2]) + 1
-    return TensorType((size, ))
+    return InternalTensor((size, ))
 
 
-def eye_type(args) -> TensorType:
+def eye_type(args) -> InternalTensor:
     if args[1] is None:
-        return TensorType((args[0], args[0]))
+        return InternalTensor((args[0], args[0]))
     else:
-        return TensorType((args[0], args[1]))
+        return InternalTensor((args[0], args[1]))
 
 def check(contents: str):
     tree = ast.parse(contents)
-    TorchChecker().visit(tree)
+    checker = TorchChecker()
+    result = checker.visit(tree)
+
+
+CONSTANT_TYPE_MAP = {
+    int: InternalInt,
+    float: InternalFloat
+}
 
 
 METHOD_MAP = {

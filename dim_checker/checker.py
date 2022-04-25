@@ -1,8 +1,10 @@
 import ast
+import operator
 from dataclasses import dataclass
 from typing import Dict, Optional, Any
 
 from dim_checker.types import ChkType, InternalInt, InternalFloat, InternalTensor, Function, ModuleDef, ModuleObj, NoneType
+from dim_checker import types
 
 builtin_types = {
     'super': Function([], NoneType())
@@ -48,11 +50,11 @@ class Context:
     def new_scope(self):
         self.scopes[len(self.scopes)] = Scope()
 
-    def lookup_name(self, node: ast.Name, scope_id: int = 0) -> ChkType:
+    def lookup_name(self, name: str, scope_id: int = 0) -> ChkType:
         scope = self.scopes[scope_id]
-        return scope.assignments[node.id]
+        return scope.assignments[name]
 
-
+SCOPE = 0
 # TODO: Imports
 class TorchChecker(ast.NodeTransformer):
 
@@ -62,7 +64,7 @@ class TorchChecker(ast.NodeTransformer):
 
     def get_type(self, node: ast.AST) -> ChkType:
         if isinstance(node, ast.Name):
-            return self.context.lookup_name(node)
+            return self.context.lookup_name(node.id)
         elif isinstance(node, ast.Constant):
             try:
                 return CONSTANT_TYPE_MAP[type(node.value)]()
@@ -108,13 +110,26 @@ class TorchChecker(ast.NodeTransformer):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
         ret_types = []
+
+        # Record arg types.
+        arg_types = []
+        for arg in node.args.args:
+            if hasattr(arg, 'annotation'):
+                arg_type = types.read_annotation(arg.annotation.id)  # type: ignore
+            else:
+                arg_type = NoneType()
+            self.context.scopes[SCOPE][arg.arg] = arg_type
+            arg_types.append(arg_type)
+
+        # Check function body
         for stmt in node.body:
             self.visit(stmt)
             if isinstance(stmt, ast.Return):
                 ret_types.append(self.get_type(stmt))
-            print(stmt)
 
-        self.context.add_type(node, Function([], ret_types))
+        func_type = Function(tuple(arg_types), ret_types)
+        self.context.add_type(node, func_type)
+        self.context.scopes[SCOPE][node.name] = func_type
         return node
 
     def visit_Return(self, node: ast.Return) -> Any:
@@ -174,12 +189,10 @@ class TorchChecker(ast.NodeTransformer):
         self.visit(node.func)
 
         func_type = self.get_type(node.func)
-
+        # TODO: Typechecking: check arg types
         arg_types = [self.get_type(arg) for arg in node.args]
 
-        # TODO: Typechecking: check arg types
         assert isinstance(func_type, Function)
-        # return func_type.ret_type
         self.context.add_type(node, func_type.ret_type)
         return node
 
@@ -196,20 +209,12 @@ class TorchChecker(ast.NodeTransformer):
         return node
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
-        super().visit(node)
+        self.visit(node.left)
+        self.visit(node.right)
         left_type = self.get_type(node.left)
         right_type = self.get_type(node.right)
 
-        if isinstance(node.op, ast.Add):
-            new_type = left_type + right_type
-        elif isinstance(node.op, ast.Sub):
-            new_type = left_type - right_type
-        elif isinstance(node.op, ast.Mult):
-            new_type = left_type * right_type
-        elif isinstance(node.op, ast.Div):
-            new_type = left_type / right_type
-        else:
-            raise TypeError
+        new_type = BIN_OP_MAP[type(node.op)](left_type, right_type)
 
         self.context.add_type(node, new_type)
         return node
@@ -296,3 +301,22 @@ METHOD_MAP = {
     'range': range_type,
     'eye': eye_type,
 }
+
+
+BIN_OP_MAP = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+}
+
+# if isinstance(node.op, ast.Add):
+#             new_type = left_type + right_type
+#         elif isinstance(node.op, ast.Sub):
+#             new_type = left_type - right_type
+#         elif isinstance(node.op, ast.Mult):
+#             new_type = left_type * right_type
+#         elif isinstance(node.op, ast.Div):
+#             new_type = left_type / right_type
+#         else:
+#             raise TypeError

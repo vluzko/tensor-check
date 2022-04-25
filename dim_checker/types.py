@@ -27,7 +27,7 @@ class NoneType(ChkType):
 
 
 class Function(ChkType):
-    arg_types: List[ChkType]
+    arg_types: Tuple[ChkType, ...]
     ret_type: ChkType
 
     def __init__(self, arg_types, ret_type):
@@ -39,6 +39,36 @@ class InternalInt(ChkType):
     def __add__(self, other: ChkType):
         if isinstance(other, InternalInt):
             return InternalInt
+        elif isinstance(other, InternalFloat):
+            return InternalFloat
+        elif isinstance(other, InternalTensor):
+            return other
+        else:
+            raise TypeError
+
+    def __sub__(self, other: ChkType):
+        if isinstance(other, InternalInt):
+            return InternalInt
+        elif isinstance(other, InternalFloat):
+            return InternalFloat
+        elif isinstance(other, InternalTensor):
+            return other
+        else:
+            raise TypeError
+
+    def __mul__(self, other: ChkType):
+        if isinstance(other, InternalInt):
+            return InternalInt
+        elif isinstance(other, InternalFloat):
+            return InternalFloat
+        elif isinstance(other, InternalTensor):
+            return other
+        else:
+            raise TypeError
+
+    def __truediv__(self, other: ChkType):
+        if isinstance(other, InternalInt):
+            return InternalFloat
         elif isinstance(other, InternalFloat):
             return InternalFloat
         elif isinstance(other, InternalTensor):
@@ -133,3 +163,14 @@ class Predicate:
 class Refinement(ChkType):
 
     predicates: List[Predicate]
+
+
+def read_annotation(annotation: str) -> ChkType:
+    if annotation == 'None':
+        return NoneType()
+    elif annotation == 'int':
+        return InternalInt()
+    elif annotation == 'float':
+        return InternalFloat()
+    else:
+        raise ValueError

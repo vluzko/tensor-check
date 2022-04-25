@@ -1,12 +1,30 @@
 import ast
+from dataclasses import dataclass
 from typing import Dict, Optional, Any
 
 from dim_checker.types import ChkType, InternalInt, InternalFloat, InternalTensor, Function, ModuleDef, ModuleObj, NoneType
 
+builtin_types = {
+    'super': Function([], NoneType())
+}
 
+
+@dataclass
 class Scope:
     assignments: Dict[str, ChkType]
     parent: Optional['Scope']
+
+    def __getitem__(self, key: str) -> ChkType:
+        return self.assignments[key]
+
+    def __setitem__(self, key, value):
+        self.assignments[key] = value
+
+    @staticmethod
+    def builtin_scope():
+        return Scope(
+            builtin_types, None
+        )
 
 
 # TODO: Different scopes
@@ -18,7 +36,7 @@ class Context:
     def __init__(self):
         self.imports = []
         self.assignments = {}
-        self.scopes = {}
+        self.scopes = {0: Scope.builtin_scope()}
         self.node_types = {}
 
     def add_type(self, node: ast.AST, node_type: ChkType):
@@ -27,17 +45,12 @@ class Context:
     def get_type(self, node: ast.AST) -> ChkType:
         return self.node_types[node]
 
-    def __getitem__(self, key: str) -> ChkType:
-        return self.assignments[key]
-
-    def __setitem__(self, key, value):
-        self.assignments[key] = value
-
     def new_scope(self):
         self.scopes[len(self.scopes)] = Scope()
 
-    def lookup_name(self, node: ast.Name):
-        pass
+    def lookup_name(self, node: ast.Name, scope_id: int = 0) -> ChkType:
+        scope = self.scopes[scope_id]
+        return scope.assignments[node.id]
 
 
 # TODO: Imports
@@ -49,7 +62,7 @@ class TorchChecker(ast.NodeTransformer):
 
     def get_type(self, node: ast.AST) -> ChkType:
         if isinstance(node, ast.Name):
-            return self.context[node.id]
+            return self.context.lookup_name(node)
         elif isinstance(node, ast.Constant):
             try:
                 return CONSTANT_TYPE_MAP[type(node.value)]()
@@ -107,7 +120,7 @@ class TorchChecker(ast.NodeTransformer):
     def visit_Return(self, node: ast.Return) -> Any:
         if node.value is not None:
             import pdb
-            pdb.set_trace()
+            # pdb.set_trace()
             self.visit(node.value)
             self.context.add_type(node, self.get_type(node.value))
         return node
@@ -149,7 +162,7 @@ class TorchChecker(ast.NodeTransformer):
                 # We hard code the fact that `forward` is called by `__call__` for torch modules.
                 if is_module and val.name == 'forward':
                     import pdb
-                    pdb.set_trace()
+                    # pdb.set_trace()
             else:
                 self.visit(val)
 
@@ -160,45 +173,27 @@ class TorchChecker(ast.NodeTransformer):
             self.visit(arg)
         self.visit(node.func)
 
-        # arg_types = [self.get_type(arg) for arg in node.args]
+        func_type = self.get_type(node.func)
 
-        print(node)
-        # Special case super
-        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call) and node.func.value.func.id == 'super':  # type: ignore
-            print(node.func.attr)
-            return node
-        elif isinstance(node.func, ast.Attribute):
-            t = self.context.lookup_name(node.func.value)
-            return node
-        # Check if we're calling torch
-        elif isinstance(node.func, ast.Name):
-            t = self.context.lookup_name(node)
-            return node
-        elif node.func.value.id != 'torch':
-            import pdb
-            pdb.set_trace()
-            return node
-        else:
-            torch_method = node.func.attr
-            parsed_args = [get_arg(x) for x in node.args]
+        arg_types = [self.get_type(arg) for arg in node.args]
 
-            method = METHOD_MAP[torch_method]
-            tensor_type = method(parsed_args)
-            self.context.add_type(node, tensor_type)
-            return node
+        # TODO: Typechecking: check arg types
+        assert isinstance(func_type, Function)
+        # return func_type.ret_type
+        self.context.add_type(node, func_type.ret_type)
+        return node
 
     def visit_Assign(self, node: ast.Assign) -> ast.Assign:
         for target in node.targets:
             self.visit(target)
         expr = self.visit(node.value)
+        # TODO: Minor: Handle destructuring
         assert len(node.targets) == 1
-        if isinstance(node.targets[0], ast.Attribute):
-            return node
-        else:
-            assert isinstance(node.targets[0], ast.Name)
+        self.context.add_type(node.targets[0], self.get_type(expr))
+        if isinstance(node.targets[0], ast.Name):
             name = node.targets[0].id
-            self.context[name] = self.context.get_type(expr)
-            return node
+            self.context.scopes[0][name] = self.context.get_type(expr)
+        return node
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
         super().visit(node)
@@ -238,7 +233,7 @@ class TorchChecker(ast.NodeTransformer):
         try:
             # TODO: This shouldn't be special cased
             if isinstance(node.value, ast.Name):
-                obj_type = self.context[node.value.id]
+                obj_type = self.context.lookup_name(node.value)
                 attr_type = obj_type.attributes[node.attr]
                 self.context.add_type(node, attr_type)
         except KeyError:

@@ -1,7 +1,7 @@
 """Type definitions.
 This would be much nicer with tagged unions, but Python doesn't have them. So we define a class hierarchy instead.
 """
-from typing import Any, Tuple, List, Dict, Union, Optional
+from typing import Any, Callable, Tuple, List, Dict, Union, Optional
 
 
 class ChkType:
@@ -116,20 +116,22 @@ class InternalTensor(ChkType):
         return self.__mul__(other)
 
 
-class ModuleDef(ChkType):
+class TorchModule(ChkType):
     attributes: Dict[str, ChkType]
-    forward_type: Optional[ChkType]
+    forward: Function
 
-    def __init__(self, attributes: Dict[str, ChkType], forward_type: ChkType):
+
+class Module(ChkType):
+    attributes: Dict[str, ChkType]
+
+    def __init__(self, attributes: Dict[str, ChkType]):
         self.attributes = attributes
-        self.forward_type = forward_type
 
 
-class ModuleObj(ChkType):
-    forward_type: ChkType
+class Dependent(ChkType):
 
-    def __init__(self, forward_type: ChkType):
-        self.forward_type = forward_type
+    def __init__(self, f: Callable) -> None:
+        self.f = f
 
 
 def broadcast(type_1: InternalTensor, type_2: InternalTensor) -> Optional[InternalTensor]:

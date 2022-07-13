@@ -1,5 +1,5 @@
-n = 5
-x = 1 + n
-y = 1 - n
-z = 1 * n
-w = 1 / n
+import torch
+
+x = torch.arange(5)
+y = torch.arange(5)
+z = x + y

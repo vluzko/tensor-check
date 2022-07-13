@@ -3,7 +3,7 @@ import operator
 from dataclasses import dataclass
 from typing import Dict, Optional, Any
 
-from dim_checker.types import ChkType, InternalInt, InternalFloat, InternalTensor, Function, ModuleDef, ModuleObj, NoneType
+from dim_checker.types import ChkType, InternalInt, InternalFloat, InternalTensor, Function, Module, ModuleObj, NoneType
 from dim_checker import types
 
 builtin_types = {
@@ -157,7 +157,7 @@ class TorchChecker(ast.NodeTransformer):
             if isinstance(val, ast.FunctionDef) and val.name == '__init__':
                 init_node, attrs = self.visit_Init(val)
 
-        class_type = ModuleDef(attrs, NoneType())
+        class_type = Module(attrs, NoneType())
         self.context.add_type(node, class_type)
         self.context['self'] = class_type
 

@@ -1,14 +1,6 @@
 {
   "site_package_search_strategy": "pep561",
   "source_directories": [
-    {
-      "import_root": ".",
-      "source": "dim_checker"
-    },
-    {
-      "import_root": ".",
-      "source": "test"
-    }
-  ],
-  "taint_models_path": "/home/vincent/software/python/lib/pyre_check/taint"
+     "."
+  ]
 }

@@ -1,18 +1,19 @@
 import json
 import subprocess
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import libcst as cst
 from pathlib import Path
 
 from libcst._position import CodeRange
 from libcst.metadata import PositionProvider
 from libcst.metadata.type_inference_provider import PyreData, TypeInferenceProvider
+from mypy_extensions import TypedDict
 
-# x = cst.parse_module("import torch")
 
-# Pyre is extremely finicky about the paths you pass to it: they have to match a particular syntax
-code_path = Path('test')
-paths = ['bin_op.py']
+PyreLC = TypedDict('PyreLC', {'line': int, 'column': int})
+PyreLocation = TypedDict('PyreLocation', {'start': PyreLC, 'end': PyreLC})
+PyreAnnotation = TypedDict('PyreAnnotation', {'location': PyreLocation, 'annotation': str})
+PyreResponse = TypedDict('PyreResponse', {'path': str, 'types': List[PyreAnnotation]})
 
 
 def check_pyre_config():
@@ -24,32 +25,23 @@ def check_pyre_config():
     raise NotImplementedError
 
 
-def run_command(cmd_args: List[str], timeout: Optional[int] = None) -> Tuple[str, str, int]:
-    process = subprocess.run(cmd_args, capture_output=True, timeout=timeout)
-    return process.stdout.decode(), process.stderr.decode(), process.returncode
-
-
-def get_pyre_types(path: Path):
+def get_pyre_types(path: Path) -> Dict[str, List[PyreAnnotation]]:
+    """Get all Pyre type annotations for the given path."""
     cmd_args = ["pyre", "--noninteractive", "query", f"types(path='{str(path)}')"]
-    try:
-        stdout, stderr, return_code = run_command(cmd_args, timeout=None)
-    except subprocess.TimeoutExpired as exc:
+    process = subprocess.run(cmd_args, capture_output=True)
+    stdout, stderr, return_code = process.stdout.decode(), process.stderr.decode(), process.returncode
 
-        raise exc
-
-    if return_code != 0:
-        raise Exception(f"stderr:\n {stderr}\nstdout:\n {stdout}")
-    try:
-        resp = json.loads(stdout)["response"]
-    except Exception as e:
-        raise Exception(f"{e}\n\nstderr:\n {stderr}\nstdout:\n {stdout}")
-    import pdb
-    pdb.set_trace()
+    assert return_code == 0, f"stderr:\n {stderr}\nstdout:\n {stdout}"
+    resp: List[PyreResponse] = json.loads(stdout)["response"]
+    return {x['path']: x['types'] for x in resp}
 
 
-def pyre_location_to_tuple(x: dict) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+def pyre_location_to_tuple(x: PyreAnnotation) -> Tuple[Tuple[int, int], Tuple[int, int]]:
     """Convert the output of Pyre check to a tuple"""
-    return tuple(x['location']['start'].values()), tuple(x['location']['stop'].values())  # type: ignore
+    loc = x['location']
+    start = loc['start']['line'], loc['start']['column']
+    end = loc['end']['line'], loc['end']['column']
+    return start, end
 
 
 def code_range_to_tuple(c: CodeRange) -> Tuple[Tuple[int, int], Tuple[int, int]]:
@@ -76,15 +68,24 @@ class Checker(cst.CSTVisitor):
             print(cached_type)
 
 
-f = (code_path / paths[0]).open().read()
-module = cst.parse_module(f)
-cache = TypeInferenceProvider.gen_cache(Path(code_path), paths, None)
-wrapper = cst.MetadataWrapper(module)
-result = wrapper.visit(Checker(cache['bin_op.py']['types']))  # type: ignore
-# wrapper = cst.MetadataWrapper(module)
-# print(wrapper)
-# wrapper.resolve(TypeInferenceProvider)
-# import pdb
-# pdb.set_trace()
-# wrapper = cst.MetadataWrapper(module, cache={TypeInferenceProvider: cache})
-# result = wrapper.visit(Checker())
+def check_file(path: Path):
+    """Run the checker on a path."""
+    if path.is_dir():
+        raise NotImplementedError
+    else:
+        pyre_types = get_pyre_types(path)
+
+        f = path.open().read()
+        module = cst.parse_module(f)
+        wrapper = cst.MetadataWrapper(module)
+        checker = Checker(pyre_types[str(path)])
+        wrapper.visit(checker)
+
+
+if __name__ == '__main__':
+    # Pyre is extremely finicky about the paths you pass to it: they have to match a particular syntax
+    code_path = Path('test')
+    paths = ['bin_op.py']
+    # f = (code_path / paths[0]).open().read()
+    # cache = TypeInferenceProvider.gen_cache(Path(code_path), paths, None)
+    check_file(code_path / paths[0])

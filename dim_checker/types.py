@@ -92,6 +92,8 @@ class InternalFloat(ChkType):
 
 class InternalTensor(ChkType):
     shape: Tuple[int, ...]
+    dtype: Optional[str]=None
+    device: Optional[str]='cpu'
 
     def __init__(self, shape: Tuple[int, ...]):
         self.shape = shape

@@ -3,7 +3,7 @@ import operator
 from dataclasses import dataclass
 from typing import Dict, Optional, Any
 
-from dim_checker.types import ChkType, InternalInt, InternalFloat, InternalTensor, Function, Module, ModuleObj, NoneType
+from dim_checker.types import ChkType, InternalInt, InternalFloat, InternalTensor, Function, Module, NoneType
 from dim_checker import types
 
 builtin_types = {

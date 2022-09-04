@@ -1,0 +1,43 @@
+[project]
+name = "tensor_check"
+version = "0.0.1"
+authors = [
+  { name="Vincent Luczkow", email="vincent.luczkow@gmail.com" },
+]
+description = "Refinement types for PyTorch"
+readme = "README.md"
+license = { file="LICENSE" }
+requires-python = ">=3.6"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "libcst==0.4.7S",
+    "pyre-check==0.9.15"
+    "torch==1.12.1"
+]
+
+[project.optional-dependencies]
+dev = [
+    "black==22.6.0",
+]
+tests = [
+    "pytest==7.1.2",
+    "mypy==0.971",
+]
+docs = [
+    "Sphinx==5.1.1",
+    "sphinx_rtd_theme==1.0.0"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/vluzko/tensor_check"
+"Bug Tracker" = "https://github.com/vluzko/tensor_check/issues"
+
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

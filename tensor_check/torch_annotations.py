@@ -1,6 +1,6 @@
 from torch import TensorType
 from typing import Iterable
-from dim_checker.types import *
+from tensor_check.types import *
 
 
 def arange_annotate(args):

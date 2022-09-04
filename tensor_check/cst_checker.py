@@ -5,8 +5,8 @@ from libcst._position import CodeRange
 from libcst.metadata import PositionProvider
 from typing import Any, Dict, List, Optional, Tuple
 
-from dim_checker.types import ChkType, Module, NoneType
-from dim_checker import pyre_utils, torch_annotations
+from tensor_check.types import ChkType, Module, NoneType
+from tensor_check import pyre_utils, torch_annotations
 
 
 class Scope:

@@ -13,11 +13,7 @@ class Scope:
     names: Dict[str, ChkType]
 
     def __init__(self):
-        self.names = {
-            'torch': Module({
-                'arange': NoneType
-            })
-        }
+        self.names = {"torch": Module({"arange": NoneType})}
 
     def __contains__(self, key: str) -> bool:
         return key in self.names
@@ -37,14 +33,14 @@ class Context:
         self.scopes.append(Scope())
         return len(self.scopes)
 
-    def has_name(self, name: str, scope_id: int=0) -> bool:
+    def has_name(self, name: str, scope_id: int = 0) -> bool:
         return name in self.scopes[scope_id]
 
-    def lookup_name(self, name: str, scope_id: int=0) -> ChkType:
+    def lookup_name(self, name: str, scope_id: int = 0) -> ChkType:
         scope = self.scopes[scope_id]
         return scope[name]
 
-    def add_type(self, name: str, node_type: ChkType,  scope_id: int=0):
+    def add_type(self, name: str, node_type: ChkType, scope_id: int = 0):
         self.scopes[scope_id].names[name] = node_type
 
     def lookup_node(self, node) -> ChkType:
@@ -56,11 +52,19 @@ class Checker(cst.CSTVisitor):
     The built-in TypeInferenceProvider is totally undocumented and I'm not wasting
     more time trying to get it to work, so I just pass the Pyre results directly
     """
+
     METADATA_DEPENDENCIES = (PositionProvider,)
+
     def __init__(self, cache: List[pyre_utils.PyreAnnotation]) -> None:
         super().__init__()
         self.types_cache = cache
-        self.by_position = {(tuple(x['location']['start'].values()), tuple(x['location']['stop'].values())): x for x in self.types_cache}
+        self.by_position = {
+            (
+                tuple(x["location"]["start"].values()),
+                tuple(x["location"]["stop"].values()),
+            ): x
+            for x in self.types_cache
+        }
         self.types = {}  # type: ignore
         self.ctx = Context()
 
@@ -69,13 +73,11 @@ class Checker(cst.CSTVisitor):
         base_node_type = self.ctx.lookup_node(node.value)
         # node_type = self.ctx.lookup_name(node.value.value)
         # TODO: Lookup types
-        import pdb
-        pdb.set_trace()
         pass
 
     def visit_Import(self, node: cst.Import) -> bool:
-        if node.names[0].name.value == 'torch':
-            self.ctx.add_type('torch', torch_annotations.TorchType)
+        if node.names[0].name.value == "torch":
+            self.ctx.add_type("torch", torch_annotations.TorchType)
         return False
 
     def visit_Name(self, node: cst.Name) -> None:
@@ -130,10 +132,10 @@ def check_code(code: str):
     raise NotImplementedError
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Pyre is extremely finicky about the paths you pass to it: they have to match a particular syntax
-    code_path = Path('tests')
-    paths = ['bin_op.py']
+    code_path = Path("tests")
+    paths = ["bin_op.py"]
     # f = (code_path / paths[0]).open().read()
     # cache = TypeInferenceProvider.gen_cache(Path(code_path), paths, None)
     check_file(code_path / paths[0])

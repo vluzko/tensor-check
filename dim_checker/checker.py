@@ -3,18 +3,24 @@ import operator
 from dataclasses import dataclass
 from typing import Dict, Optional, Any
 
-from dim_checker.types import ChkType, InternalInt, InternalFloat, InternalTensor, Function, Module, NoneType
+from dim_checker.types import (
+    ChkType,
+    InternalInt,
+    InternalFloat,
+    InternalTensor,
+    Function,
+    Module,
+    NoneType,
+)
 from dim_checker import types
 
-builtin_types = {
-    'super': Function([], NoneType())
-}
+builtin_types = {"super": Function([], NoneType())}
 
 
 @dataclass
 class Scope:
     assignments: Dict[str, ChkType]
-    parent: Optional['Scope']
+    parent: Optional["Scope"]
 
     def __getitem__(self, key: str) -> ChkType:
         return self.assignments[key]
@@ -24,9 +30,7 @@ class Scope:
 
     @staticmethod
     def builtin_scope():
-        return Scope(
-            builtin_types, None
-        )
+        return Scope(builtin_types, None)
 
 
 # TODO: Different scopes
@@ -54,10 +58,10 @@ class Context:
         scope = self.scopes[scope_id]
         return scope.assignments[name]
 
+
 SCOPE = 0
 # TODO: Imports
 class TorchChecker(ast.NodeTransformer):
-
     def __init__(self):
         super().__init__()
         self.context = Context()
@@ -78,7 +82,7 @@ class TorchChecker(ast.NodeTransformer):
         return node
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
-        if node.module == 'torch':
+        if node.module == "torch":
             # TODO: Import types for all imported modules
             # TODO: Remap aliases (`node.names[i].asname`)
             self.context.imports.extend(node.names)
@@ -95,7 +99,7 @@ class TorchChecker(ast.NodeTransformer):
                     # TODO: Allow other kinds of assignment
                     assert isinstance(target, ast.Attribute)
                     assert isinstance(target.value, ast.Name)
-                    if target.value.id == 'self':
+                    if target.value.id == "self":
                         attributes[target.attr] = NoneType()
         return node, attributes
 
@@ -114,7 +118,7 @@ class TorchChecker(ast.NodeTransformer):
         # Record arg types.
         arg_types = []
         for arg in node.args.args:
-            if hasattr(arg, 'annotation'):
+            if hasattr(arg, "annotation"):
                 arg_type = types.read_annotation(arg.annotation.id)  # type: ignore
             else:
                 arg_type = NoneType()
@@ -135,6 +139,7 @@ class TorchChecker(ast.NodeTransformer):
     def visit_Return(self, node: ast.Return) -> Any:
         if node.value is not None:
             import pdb
+
             # pdb.set_trace()
             self.visit(node.value)
             self.context.add_type(node, self.get_type(node.value))
@@ -148,23 +153,28 @@ class TorchChecker(ast.NodeTransformer):
             if isinstance(base, ast.AST):
                 self.visit(base)
             # TODO: Handle import aliases and shadowing
-            if isinstance(base, ast.Attribute) and base.attr == 'Module' and isinstance(base.value, ast.Name) and base.value.id == 'nn':
+            if (
+                isinstance(base, ast.Attribute)
+                and base.attr == "Module"
+                and isinstance(base.value, ast.Name)
+                and base.value.id == "nn"
+            ):
                 is_module = True
 
         # Check the __init__ type first
         attrs = {}
         for val in node.body:
-            if isinstance(val, ast.FunctionDef) and val.name == '__init__':
+            if isinstance(val, ast.FunctionDef) and val.name == "__init__":
                 init_node, attrs = self.visit_Init(val)
 
         class_type = Module(attrs, NoneType())
         self.context.add_type(node, class_type)
-        self.context['self'] = class_type
+        self.context["self"] = class_type
 
         for val in node.body:
             if isinstance(val, ast.FunctionDef):
                 # We don't check __init__ again
-                if val.name == '__init__':
+                if val.name == "__init__":
                     continue
                 # For now, no support for decorators. General decorators are unlikely to ever be supported
                 # TODO: classmethods (maybe)
@@ -175,8 +185,9 @@ class TorchChecker(ast.NodeTransformer):
                     # TODO: Create separate `self` scopes for methods
                     self.visit_MethodDef(val)
                 # We hard code the fact that `forward` is called by `__call__` for torch modules.
-                if is_module and val.name == 'forward':
+                if is_module and val.name == "forward":
                     import pdb
+
                     # pdb.set_trace()
             else:
                 self.visit(val)
@@ -261,19 +272,19 @@ def constructor(args) -> InternalTensor:
     if isinstance(shape_arg, tuple):
         return InternalTensor(shape_arg)
     elif isinstance(shape_arg, int):
-        return InternalTensor((shape_arg, ))
+        return InternalTensor((shape_arg,))
     else:
         raise TypeError
 
 
 def arange_type(args) -> InternalTensor:
     size = int((args[1] - args[0]) / args[2])
-    return InternalTensor((size, ))
+    return InternalTensor((size,))
 
 
 def range_type(args) -> InternalTensor:
     size = int((args[1] - args[0]) / args[2]) + 1
-    return InternalTensor((size, ))
+    return InternalTensor((size,))
 
 
 def eye_type(args) -> InternalTensor:
@@ -282,24 +293,22 @@ def eye_type(args) -> InternalTensor:
     else:
         return InternalTensor((args[0], args[1]))
 
+
 def check(contents: str):
     tree = ast.parse(contents)
     checker = TorchChecker()
     result = checker.visit(tree)
 
 
-CONSTANT_TYPE_MAP = {
-    int: InternalInt,
-    float: InternalFloat
-}
+CONSTANT_TYPE_MAP = {int: InternalInt, float: InternalFloat}
 
 
 METHOD_MAP = {
-    'zeros': constructor,
-    'ones': constructor,
-    'arange': arange_type,
-    'range': range_type,
-    'eye': eye_type,
+    "zeros": constructor,
+    "ones": constructor,
+    "arange": arange_type,
+    "range": range_type,
+    "eye": eye_type,
 }
 
 

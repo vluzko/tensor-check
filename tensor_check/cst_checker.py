@@ -68,6 +68,17 @@ class Checker(cst.CSTVisitor):
         self.types = {}  # type: ignore
         self.ctx = Context()
 
+    def visit_FunctionDef(self, node):
+        pass
+
+    def visit_Assign(self, node):
+        node.value.visit(self)
+
+        # Assign the name in this context
+        rhs_type = self.ctx.lookup_node(node.value)
+        assert len(node.targets) == 1
+        self.ctx.add_type(node.targets[0].target.value, rhs_type)
+
     def visit_Attribute(self, node: cst.Attribute):
         node.value.visit(self)
         base_node_type = self.ctx.lookup_node(node.value)

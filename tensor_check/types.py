@@ -4,7 +4,23 @@ This would be much nicer with tagged unions, but Python doesn't have them. So we
 from typing import Any, Callable, Tuple, List, Dict, Union, Optional
 
 
+class Predicate:
+    pass
+
+
+class Equal(Predicate):
+    lhs: Any
+    rhs: Any
+
+    def __init__(self, lhs, rhs) -> None:
+        self.lhs = lhs
+        self.rhs = rhs
+
+
 class ChkType:
+
+    constraints: List[Predicate]
+
     def __add__(self, other: Any):
         raise NotImplementedError
 
@@ -20,18 +36,24 @@ class ChkType:
     def __truediv__(self, other: Any):
         raise NotImplementedError
 
+    def bind(self, variable_map: Dict[str, "ChkType"]):
+        raise NotImplementedError
+
 
 class NoneType(ChkType):
     pass
 
 
 class Function(ChkType):
-    arg_types: Tuple[ChkType, ...]
+    arg_types: Tuple[Tuple[str, ChkType], ...]
     ret_type: ChkType
 
-    def __init__(self, arg_types, ret_type):
+    def __init__(self, arg_types: Tuple[Tuple[str, ChkType], ...], ret_type: ChkType):
         self.arg_types = arg_types
         self.ret_type = ret_type
+
+    def bind(self, variable_map: Dict[str, "ChkType"]) -> ChkType:
+        return self.ret_type.bind(variable_map)
 
 
 class InternalInt(ChkType):
@@ -89,18 +111,18 @@ class InternalFloat(ChkType):
 
 
 class InternalTensor(ChkType):
-    shape: Tuple[int, ...]
+    shape: Tuple[InternalInt, ...]
     dtype: Optional[str] = None
     device: Optional[str] = "cpu"
 
-    def __init__(self, shape: Tuple[int, ...]):
+    def __init__(self, shape: Tuple[InternalInt, ...]):
         self.shape = shape
 
     def __add__(self, other: "InternalTensor"):
         if self.shape == other.shape:
             return InternalTensor(self.shape)
         else:
-            raise TypeError
+            raise TypeError("Tried to add tensors with incompatible shapes.")
 
     def __sub__(self, other: "InternalTensor"):
         return self.__add__(other)
@@ -119,6 +141,10 @@ class InternalTensor(ChkType):
     def __truediv__(self, other: "InternalTensor"):
         return self.__mul__(other)
 
+    def bind(self, variable_map: Dict[str, "ChkType"]) -> ChkType:
+        new_shape = tuple(x.bind(variable_map) for x in self.shape)
+        return InternalTensor(new_shape)
+
 
 class TorchModule(ChkType):
     attributes: Dict[str, ChkType]
@@ -130,11 +156,6 @@ class Module(ChkType):
 
     def __init__(self, attributes: Dict[str, ChkType]):
         self.attributes = attributes
-
-
-class Dependent(ChkType):
-    def __init__(self, f: Callable) -> None:
-        self.f = f
 
 
 def broadcast(
@@ -161,23 +182,3 @@ def broadcast(
 
     final_shape = tuple(reversed(new_shape))
     return InternalTensor(final_shape)
-
-
-class Predicate:
-    pass
-
-
-class Refinement(ChkType):
-
-    predicates: List[Predicate]
-
-
-def read_annotation(annotation: str) -> ChkType:
-    if annotation == "None":
-        return NoneType()
-    elif annotation == "int":
-        return InternalInt()
-    elif annotation == "float":
-        return InternalFloat()
-    else:
-        raise ValueError

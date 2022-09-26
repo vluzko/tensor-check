@@ -1,28 +1,14 @@
-from torch import TensorType
-from typing import Iterable
-from tensor_check.types import *
+from tensor_check import types
 
 
-def arange_annotate(args):
-    pass
-
-
-def ones_annotate(shape: Union[int, Iterable[int]], *, dtype=None) -> InternalTensor:
-    if isinstance(shape, int):
-        final_shape = (shape,)
-    else:
-        final_shape = tuple(shape)  # type: ignore
-    return InternalTensor(final_shape)
-
-
-def zeros_annotate(shape: Union[int, Iterable[int]], *, dtype=None) -> InternalTensor:
-    if isinstance(shape, int):
-        final_shape = (shape,)
-    else:
-        final_shape = tuple(shape)  # type: ignore
-    return InternalTensor(final_shape)
-
-
-TorchType = Module(
-    {"arange": Dependent(arange_annotate), "zeros": Dependent(arange_annotate)}
+ones_type = types.Function(
+    (("size", types.InternalInt()),),
+    types.InternalTensor((types.InternalInt(), types.InternalInt())),
 )
+
+ones_type.constraints = [
+    types.Equal("size", "$ret.shape[0]"),
+    types.Equal("size", "$ret.shape[1]"),
+]
+
+TorchType = types.Module({"ones": ones_type})

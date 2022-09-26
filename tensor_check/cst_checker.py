@@ -3,17 +3,20 @@ import libcst as cst
 from pathlib import Path
 from libcst._position import CodeRange
 from libcst.metadata import PositionProvider
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from tensor_check.types import ChkType, Module, NoneType
 from tensor_check import pyre_utils, torch_annotations
 
 
 class Scope:
-    names: Dict[str, ChkType]
+    parent_scope: Optional["Scope"]
+    names: Dict[str, cst.CSTNode]
 
-    def __init__(self):
-        self.names = {"torch": Module({"arange": NoneType})}
+    def __init__(self, parent: Optional["Scope"] = None):
+        # TODO: Needs to be an ordered dict
+        self.names = {}
+        self.parent = parent
 
     def __contains__(self, key: str) -> bool:
         return key in self.names
@@ -21,13 +24,24 @@ class Scope:
     def __getitem__(self, key: str):
         return self.names[key]
 
+    def __setitem__(self, key: str, node: cst.CSTNode):
+        self.names[key] = node
+
+    def all_names(self) -> Iterable[str]:
+        if self.parent_scope is not None:
+            return (*self.names.keys(), *self.parent_scope.all_names())
+        else:
+            return (x for x in self.names.keys())
+
 
 class Context:
     scopes: List[Scope]
+    types: Dict[cst.CSTNode, ChkType]
     imports: Any
 
     def __init__(self):
         self.scopes = [Scope()]
+        self.types = {}
 
     def new_scope(self) -> int:
         self.scopes.append(Scope())
@@ -38,13 +52,19 @@ class Context:
 
     def lookup_name(self, name: str, scope_id: int = 0) -> ChkType:
         scope = self.scopes[scope_id]
-        return scope[name]
+        node = scope[name]
+        return self.types[node]
 
-    def add_type(self, name: str, node_type: ChkType, scope_id: int = 0):
-        self.scopes[scope_id].names[name] = node_type
+    def add_type(self, node, node_type: ChkType, name: str = None, scope_id: int = 0):
+        self.types[node] = node_type
+        if name is not None:
+            self.scopes[scope_id][name] = node
 
     def lookup_node(self, node) -> ChkType:
-        return NoneType()
+        if isinstance(node, cst.Name):
+            return self.lookup_name(node.value)
+        else:
+            return self.types[node]
 
 
 class Checker(cst.CSTVisitor):
@@ -65,11 +85,7 @@ class Checker(cst.CSTVisitor):
             ): x
             for x in self.types_cache
         }
-        self.types = {}  # type: ignore
         self.ctx = Context()
-
-    def visit_FunctionDef(self, node):
-        pass
 
     def visit_Assign(self, node):
         node.value.visit(self)
@@ -82,32 +98,40 @@ class Checker(cst.CSTVisitor):
     def visit_Attribute(self, node: cst.Attribute):
         node.value.visit(self)
         base_node_type = self.ctx.lookup_node(node.value)
-        # node_type = self.ctx.lookup_name(node.value.value)
-        # TODO: Lookup types
+        assert isinstance(node.attr, cst.Name)
+        attribute_type = base_node_type.attributes[node.attr.value]
+        self.ctx.add_type(node, attribute_type)
+
+    def visit_Call(self, node: cst.Call):
+        node.func.visit(self)
+        func_type = self.ctx.lookup_node(node.func)
+        # TODO: Handle Args
+        # TODO: Handle kwargs
+        # TODO: Get return type
+        import pdb
+
+        pdb.set_trace()
+
+    def visit_FunctionDef(self, node):
+        # TODO: Get arg types
+        # TODO: Visit body
+        # TODO: Store function type
         pass
 
-    def visit_Import(self, node: cst.Import) -> bool:
+    def visit_Import(self, node: cst.Import):
         if node.names[0].name.value == "torch":
-            self.ctx.add_type("torch", torch_annotations.TorchType)
-        return False
+            self.ctx.add_type(node, torch_annotations.TorchType, "torch")
 
     def visit_Name(self, node: cst.Name) -> None:
-        # if node.value == 'arange':
-        #     import pdb
-        #     pdb.set_trace()
-        # Only print out names that are parameters
-        # if self.get_metadata(PositionProvider, node):
         position = code_range_to_tuple(self.get_metadata(PositionProvider, node))
         if position in self.by_position:
-            print(node)
             cached_type = self.by_position[position]
-            print(cached_type)
-            self.types[node] = cached_type
+            # TODO: Convert pyre to internal type
+            self.ctx.add_type(node, cached_type, node.value)
         else:
             pass
 
     def visit_BinaryOperation(self, node: cst.BinaryOperation) -> None:
-        # print(node)
         pass
 
 

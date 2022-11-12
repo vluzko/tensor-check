@@ -1,3 +1,4 @@
+from copy import copy
 import libcst as cst
 
 from pathlib import Path
@@ -97,10 +98,12 @@ class Checker(cst.CSTVisitor):
 
         # Assign the name in this context
         rhs_type = self.ctx.lookup_node(node.value)
-        assert len(node.targets) == 1
         # TODO: Multiple targets
         # TODO: Other forms of assignment
-        self.ctx.add_type(node.targets[0].target.value, rhs_type)
+        assert len(node.targets) == 1
+        assignee = node.targets[0]
+        assert isinstance(assignee.target, cst.Name)
+        self.ctx.add_type(node, rhs_type, assignee.target.value)
 
     def visit_Attribute(self, node: cst.Attribute):
         node.value.visit(self)
@@ -130,20 +133,24 @@ class Checker(cst.CSTVisitor):
             self.ctx.add_type(node, torch_annotations.TorchType, "torch")
 
     def visit_Name(self, node: cst.Name) -> None:
-        position = code_range_to_tuple(self.get_metadata(PositionProvider, node))
-        if position in self.by_position:
-            cached_type = self.by_position[position]
-            # TODO: Convert pyre to internal type
-            self.ctx.add_type(node, cached_type, node.value)
-        else:
-            pass
+        self.ctx.add_type(node, self.ctx.lookup_name(node.value))
 
     def visit_BinaryOperation(self, node: cst.BinaryOperation) -> None:
-        pass
+        l_type = self.ctx.lookup_node(node.left)
+        r_type = self.ctx.lookup_node(node.right)
+        # TODO: Typing check against __add__
+        # TODO: Support for non-names
+        assert isinstance(node.left, cst.Name)
+        assert isinstance(node.right, cst.Name)
+        base_type = copy(l_type)
+        base_type.constraints = [
+            tc_types.Equal(tc_types.Self(), f"{node.left.value} + {node.right.value}")
+        ]
+        self.ctx.add_type(node, base_type)
 
     def visit_Integer(self, node: cst.Integer) -> None:
         t = tc_types.InternalInt()
-        t.constraints = [tc_types.Equal(tc_types.Self(), node.value)]
+        t.constraints = [tc_types.Equal(tc_types.Self(), int(node.value))]
         self.ctx.add_type(node, t)
 
     def visit_Float(self, node: cst.Float) -> None:
@@ -188,7 +195,7 @@ def check_code(code: str):
 if __name__ == "__main__":
     # Pyre is extremely finicky about the paths you pass to it: they have to match a particular syntax
     code_path = Path("tests") / "test_files"
-    paths = ["bin_op.py"]
+    paths = ["arithmetic.py"]
     # f = (code_path / paths[0]).open().read()
     # cache = TypeInferenceProvider.gen_cache(Path(code_path), paths, None)
     check_file(code_path / paths[0])

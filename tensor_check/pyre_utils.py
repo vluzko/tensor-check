@@ -28,7 +28,7 @@ def check_pyre_config():
 def get_pyre_types(path: Path) -> Dict[str, List[PyreAnnotation]]:  # type: ignore
     """Get all Pyre type annotations for the given path."""
     # Check cache
-    cache_path = path.parent / ".tensor_check_cache" / "pyre_cache.pkl"
+    cache_path = Path.cwd() / ".tensor_check" / "pyre_cache.pkl"
     if cache_path.exists():
         cache = pickle.load(cache_path.open("rb"))
     else:
@@ -54,7 +54,7 @@ def get_pyre_types(path: Path) -> Dict[str, List[PyreAnnotation]]:  # type: igno
         subprocess.run(["killall", "pyre"], capture_output=True)
         subprocess.run(["killall", "pyre.bin"], capture_output=True)
         resp: List[PyreResponse] = json.loads(stdout)["response"]  # type: ignore
-        result = {x["path"]: x["types"] for x in resp}
+        result = {str(Path(x["path"]).absolute()): x["types"] for x in resp}
         # TODO: Store file level cache (or some other less brittle solution)
         cache[str(path.absolute())] = result
         pickle.dump(cache, cache_path.open("wb"))

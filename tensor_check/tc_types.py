@@ -2,8 +2,10 @@
 This would be much nicer with tagged unions, but Python doesn't have them. So we define a class hierarchy instead.
 """
 from typing import Any, Callable, Tuple, List, Dict, Union, Optional
+from dataclasses import dataclass
 
 
+@dataclass
 class Predicate:
     pass
 
@@ -12,13 +14,10 @@ class Self(Predicate):
     pass
 
 
+@dataclass
 class Equal(Predicate):
     lhs: Any
     rhs: Any
-
-    def __init__(self, lhs, rhs) -> None:
-        self.lhs = lhs
-        self.rhs = rhs
 
 
 class ChkType:
@@ -186,3 +185,11 @@ def broadcast(
 
     final_shape = tuple(reversed(new_shape))
     return InternalTensor(final_shape)
+
+
+def from_pyre(pyre_type: Any) -> ChkType:
+    """Convert a Pyre annotation to a ChkType."""
+    if pyre_type == "int":
+        return InternalInt()
+    else:
+        raise NotImplementedError

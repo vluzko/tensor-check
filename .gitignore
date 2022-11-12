@@ -2,3 +2,5 @@
 .vscode/
 *.egg-info/
 __pycache__/
+.pyre/
+.tensor_check_cache/

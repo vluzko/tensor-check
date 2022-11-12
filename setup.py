@@ -1,3 +1,3 @@
-
 import setuptools
-setuptools.setup(name='dim_checker')
+
+setuptools.setup(name="tensor_check")

@@ -1,19 +1,40 @@
 [project]
-name = "mat-dim-checker"
-version = '0.0.1'
-description = "Matrix dimension checking with refinement types"
+name = "tensor_check"
+version = "0.0.1"
 authors = [
-    "Vincent Luczkow"
+  { name="Vincent Luczkow", email="vincent.luczkow@gmail.com" },
 ]
-license = "MIT"
-python = "^3.6"
+description = "Refinement types for PyTorch"
 readme = "README.md"
+license = { file="LICENSE" }
+requires-python = ">=3.6"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
 
-[dependencies]
+dependencies = [
+    "libcst==0.4.7",
+    "pyre-check==0.9.15",
+    "torch==1.12.1"
+]
 
-[dev-dependencies]
-pytest = "6.2.5"
+[project.optional-dependencies]
+dev = [
+    "black==22.6.0",
+    "pre-commit==2.20.0",
+    "pytest==7.1.2",
+    "mypy==0.971",
+    "Sphinx==5.1.1",
+    "sphinx_rtd_theme==1.0.0"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/vluzko/tensor_check"
+"Bug Tracker" = "https://github.com/vluzko/tensor_check/issues"
+
 
 [build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta:__legacy__"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

@@ -1,331 +1,194 @@
-import ast
-import operator
-from dataclasses import dataclass
-from typing import Dict, Optional, Any
+import libcst as cst
 
-from dim_checker.types import (
-    ChkType,
-    InternalInt,
-    InternalFloat,
-    InternalTensor,
-    Function,
-    Module,
-    NoneType,
-)
-from dim_checker import types
+from pathlib import Path
+from libcst._position import CodeRange
+from libcst.metadata import PositionProvider
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-builtin_types = {"super": Function([], NoneType())}
+from tensor_check import pyre_utils, tc_types, torch_annotations
 
 
-@dataclass
 class Scope:
-    assignments: Dict[str, ChkType]
-    parent: Optional["Scope"]
+    parent_scope: Optional["Scope"]
+    names: Dict[str, cst.CSTNode]
 
-    def __getitem__(self, key: str) -> ChkType:
-        return self.assignments[key]
+    def __init__(self, parent: Optional["Scope"] = None):
+        # TODO: Needs to be an ordered dict
+        self.names = {}
+        self.parent = parent
 
-    def __setitem__(self, key, value):
-        self.assignments[key] = value
+    def __contains__(self, key: str) -> bool:
+        return key in self.names
 
-    @staticmethod
-    def builtin_scope():
-        return Scope(builtin_types, None)
+    def __getitem__(self, key: str):
+        return self.names[key]
 
+    def __setitem__(self, key: str, node: cst.CSTNode):
+        self.names[key] = node
 
-# TODO: Different scopes
-class Context:
-    assignments: Dict[str, ChkType]
-    scopes: Dict[int, Scope]
-    node_types: Dict[ast.AST, ChkType]
-
-    def __init__(self):
-        self.imports = []
-        self.assignments = {}
-        self.scopes = {0: Scope.builtin_scope()}
-        self.node_types = {}
-
-    def add_type(self, node: ast.AST, node_type: ChkType):
-        self.node_types[node] = node_type
-
-    def get_type(self, node: ast.AST) -> ChkType:
-        return self.node_types[node]
-
-    def new_scope(self):
-        self.scopes[len(self.scopes)] = Scope()
-
-    def lookup_name(self, name: str, scope_id: int = 0) -> ChkType:
-        scope = self.scopes[scope_id]
-        return scope.assignments[name]
-
-
-SCOPE = 0
-# TODO: Imports
-class TorchChecker(ast.NodeTransformer):
-    def __init__(self):
-        super().__init__()
-        self.context = Context()
-
-    def get_type(self, node: ast.AST) -> ChkType:
-        if isinstance(node, ast.Name):
-            return self.context.lookup_name(node.id)
-        elif isinstance(node, ast.Constant):
-            try:
-                return CONSTANT_TYPE_MAP[type(node.value)]()
-            except KeyError:
-                return type(node.value)
+    def all_names(self) -> Iterable[str]:
+        if self.parent_scope is not None:
+            return (*self.names.keys(), *self.parent_scope.all_names())
         else:
-            return self.context.get_type(node)
+            return (x for x in self.names.keys())
 
-    def visit_Import(self, node: ast.Import) -> Any:
-        # TODO: Import types for all imported modules
-        return node
 
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
-        if node.module == "torch":
-            # TODO: Import types for all imported modules
-            # TODO: Remap aliases (`node.names[i].asname`)
-            self.context.imports.extend(node.names)
-        return node
+class Context:
+    scopes: List[Scope]
+    types: Dict[cst.CSTNode, tc_types.ChkType]
+    imports: Any
 
-    def visit_Init(self, node: ast.FunctionDef) -> Any:
-        attributes = {}
-        for stmt in node.body:
-            self.visit(stmt)
-            if isinstance(stmt, ast.Assign):
-                # TODO: Handle multiple targets (probably not)
-                if len(stmt.targets) == 1:
-                    target = stmt.targets[0]
-                    # TODO: Allow other kinds of assignment
-                    assert isinstance(target, ast.Attribute)
-                    assert isinstance(target.value, ast.Name)
-                    if target.value.id == "self":
-                        attributes[target.attr] = NoneType()
-        return node, attributes
+    def __init__(self):
+        self.scopes = [Scope()]
+        self.types = {}
 
-    def visit_MethodDef(self, node: ast.FunctionDef) -> Any:
-        ret_types = []
-        for stmt in node.body:
-            self.visit(stmt)
-            if isinstance(stmt, ast.Return):
-                ret_types.append(self.get_type(stmt))
-            print(stmt)
-        return node
+    def new_scope(self) -> int:
+        self.scopes.append(Scope())
+        return len(self.scopes)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> Any:
-        ret_types = []
+    def has_name(self, name: str, scope_id: int = 0) -> bool:
+        return name in self.scopes[scope_id]
 
-        # Record arg types.
-        arg_types = []
-        for arg in node.args.args:
-            if hasattr(arg, "annotation"):
-                arg_type = types.read_annotation(arg.annotation.id)  # type: ignore
-            else:
-                arg_type = NoneType()
-            self.context.scopes[SCOPE][arg.arg] = arg_type
-            arg_types.append(arg_type)
+    def lookup_name(self, name: str, scope_id: int = 0) -> tc_types.ChkType:
+        scope = self.scopes[scope_id]
+        node = scope[name]
+        return self.types[node]
 
-        # Check function body
-        for stmt in node.body:
-            self.visit(stmt)
-            if isinstance(stmt, ast.Return):
-                ret_types.append(self.get_type(stmt))
+    def add_type(
+        self,
+        node,
+        node_type: tc_types.ChkType,
+        name: Optional[str] = None,
+        scope_id: int = 0,
+    ):
+        self.types[node] = node_type
+        if name is not None:
+            self.scopes[scope_id][name] = node
 
-        func_type = Function(tuple(arg_types), ret_types)
-        self.context.add_type(node, func_type)
-        self.context.scopes[SCOPE][node.name] = func_type
-        return node
+    def lookup_node(self, node) -> tc_types.ChkType:
+        if isinstance(node, cst.Name):
+            return self.lookup_name(node.value)
+        else:
+            return self.types[node]
 
-    def visit_Return(self, node: ast.Return) -> Any:
-        if node.value is not None:
-            import pdb
 
-            # pdb.set_trace()
-            self.visit(node.value)
-            self.context.add_type(node, self.get_type(node.value))
-        return node
+class Checker(cst.CSTVisitor):
+    """Type checker
+    The built-in TypeInferenceProvider is totally undocumented and I'm not wasting
+    more time trying to get it to work, so I just pass the Pyre results directly
+    """
 
-    # TODO: decorator_list
-    # TODO: keywords
-    def visit_ClassDef(self, node: ast.ClassDef) -> Any:
-        is_module = False
-        for base in node.bases:
-            if isinstance(base, ast.AST):
-                self.visit(base)
-            # TODO: Handle import aliases and shadowing
-            if (
-                isinstance(base, ast.Attribute)
-                and base.attr == "Module"
-                and isinstance(base.value, ast.Name)
-                and base.value.id == "nn"
-            ):
-                is_module = True
+    METADATA_DEPENDENCIES = (PositionProvider,)
 
-        # Check the __init__ type first
-        attrs = {}
-        for val in node.body:
-            if isinstance(val, ast.FunctionDef) and val.name == "__init__":
-                init_node, attrs = self.visit_Init(val)
+    def __init__(self, cache: List[pyre_utils.PyreAnnotation]) -> None:
+        super().__init__()
+        self.types_cache = cache
+        self.by_position = {
+            (
+                tuple(x["location"]["start"].values()),
+                tuple(x["location"]["stop"].values()),
+            ): x
+            for x in self.types_cache
+        }
+        self.ctx = Context()
 
-        class_type = Module(attrs, NoneType())
-        self.context.add_type(node, class_type)
-        self.context["self"] = class_type
+    def visit_Assign(self, node: cst.Assign):
+        node.value.visit(self)
 
-        for val in node.body:
-            if isinstance(val, ast.FunctionDef):
-                # We don't check __init__ again
-                if val.name == "__init__":
-                    continue
-                # For now, no support for decorators. General decorators are unlikely to ever be supported
-                # TODO: classmethods (maybe)
-                # TODO: staticmethods (maybe)
-                elif len(val.decorator_list) > 0:
-                    continue
-                else:
-                    # TODO: Create separate `self` scopes for methods
-                    self.visit_MethodDef(val)
-                # We hard code the fact that `forward` is called by `__call__` for torch modules.
-                if is_module and val.name == "forward":
-                    import pdb
-
-                    # pdb.set_trace()
-            else:
-                self.visit(val)
-
-        return node
-
-    def visit_Call(self, node) -> ast.Call:
-        for arg in node.args:
-            self.visit(arg)
-        self.visit(node.func)
-
-        func_type = self.get_type(node.func)
-        # TODO: Typechecking: check arg types
-        arg_types = [self.get_type(arg) for arg in node.args]
-
-        assert isinstance(func_type, Function)
-        self.context.add_type(node, func_type.ret_type)
-        return node
-
-    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
-        for target in node.targets:
-            self.visit(target)
-        expr = self.visit(node.value)
-        # TODO: Minor: Handle destructuring
+        # Assign the name in this context
+        rhs_type = self.ctx.lookup_node(node.value)
         assert len(node.targets) == 1
-        self.context.add_type(node.targets[0], self.get_type(expr))
-        if isinstance(node.targets[0], ast.Name):
-            name = node.targets[0].id
-            self.context.scopes[0][name] = self.context.get_type(expr)
-        return node
+        # TODO: Multiple targets
+        # TODO: Other forms of assignment
+        self.ctx.add_type(node.targets[0].target.value, rhs_type)
 
-    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
-        self.visit(node.left)
-        self.visit(node.right)
-        left_type = self.get_type(node.left)
-        right_type = self.get_type(node.right)
+    def visit_Attribute(self, node: cst.Attribute):
+        node.value.visit(self)
+        base_node_type = self.ctx.lookup_node(node.value)
+        assert isinstance(node.attr, cst.Name)
+        attribute_type = base_node_type.attributes[node.attr.value]
+        self.ctx.add_type(node, attribute_type)
 
-        new_type = BIN_OP_MAP[type(node.op)](left_type, right_type)
+    def visit_Call(self, node: cst.Call):
+        node.func.visit(self)
+        func_type = self.ctx.lookup_node(node.func)
+        # TODO: Handle Args
+        # TODO: Handle kwargs
+        # TODO: Get return type
+        import pdb
 
-        self.context.add_type(node, new_type)
-        return node
+        pdb.set_trace()
 
-    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
-        try:
-            node_type = CONSTANT_TYPE_MAP[type(node.value)]()
-            self.context.add_type(node, node_type)
-        except KeyError:
-            self.context.add_type(node, type(node.value))
-        return node
+    def visit_FunctionDef(self, node):
+        # TODO: Get arg types
+        # TODO: Visit body
+        # TODO: Store function type
+        pass
 
-    def visit_Name(self, node: ast.Name):
-        if node.id in self.context.assignments:
-            self.context.add_type(node, self.context.assignments[node.id])
-        return node
+    def visit_Import(self, node: cst.Import):
+        if node.names[0].name.value == "torch":
+            self.ctx.add_type(node, torch_annotations.TorchType, "torch")
 
-    def visit_Attribute(self, node: ast.Attribute):
-        super().visit(node.ctx)
-        super().visit(node.value)
-        try:
-            # TODO: This shouldn't be special cased
-            if isinstance(node.value, ast.Name):
-                obj_type = self.context.lookup_name(node.value)
-                attr_type = obj_type.attributes[node.attr]
-                self.context.add_type(node, attr_type)
-        except KeyError:
+    def visit_Name(self, node: cst.Name) -> None:
+        position = code_range_to_tuple(self.get_metadata(PositionProvider, node))
+        if position in self.by_position:
+            cached_type = self.by_position[position]
+            # TODO: Convert pyre to internal type
+            self.ctx.add_type(node, cached_type, node.value)
+        else:
             pass
-        return node
+
+    def visit_BinaryOperation(self, node: cst.BinaryOperation) -> None:
+        pass
+
+    def visit_Integer(self, node: cst.Integer) -> None:
+        t = tc_types.InternalInt()
+        t.constraints = [tc_types.Equal(tc_types.Self(), node.value)]
+        self.ctx.add_type(node, t)
+
+    def visit_Float(self, node: cst.Float) -> None:
+        t = tc_types.InternalFloat()
+        t.constraints = [tc_types.Equal(tc_types.Self(), node.value)]
+        self.ctx.add_type(node, t)
 
 
-def get_arg(arg: ast.expr) -> Any:
+def check_pyre_config():
+    """Make sure Pyre paths are configured correctly
+    Pyre is extremely finicky about paths. The paths you pass have to match the particular
+    syntax used in the config file, not just point to the same files.
 
-    if isinstance(arg, ast.Tuple):
-        result = tuple(get_arg(x) for x in arg.elts)
-    elif isinstance(arg, ast.Constant):
-        result = arg.value
-
-    return result
+    """
+    raise NotImplementedError
 
 
-def constructor(args) -> InternalTensor:
-    shape_arg = args[0]
-    if isinstance(shape_arg, tuple):
-        return InternalTensor(shape_arg)
-    elif isinstance(shape_arg, int):
-        return InternalTensor((shape_arg,))
+def code_range_to_tuple(c: CodeRange) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    """Convert a CodeRange to a tuple"""
+    return ((c.start.line, c.start.column), (c.end.line, c.end.column))
+
+
+def check_file(path: Path):
+    """Run the checker on a path."""
+    if path.is_dir():
+        raise NotImplementedError
     else:
-        raise TypeError
+        pyre_types = pyre_utils.get_pyre_types(path)
+        f = path.open().read()
+        module = cst.parse_module(f)
+        wrapper = cst.MetadataWrapper(module)
+        checker = Checker(pyre_types[str(path)])
+        wrapper.visit(checker)
+        print(checker.ctx)
+        return checker.ctx
 
 
-def arange_type(args) -> InternalTensor:
-    size = int((args[1] - args[0]) / args[2])
-    return InternalTensor((size,))
+def check_code(code: str):
+    raise NotImplementedError
 
 
-def range_type(args) -> InternalTensor:
-    size = int((args[1] - args[0]) / args[2]) + 1
-    return InternalTensor((size,))
-
-
-def eye_type(args) -> InternalTensor:
-    if args[1] is None:
-        return InternalTensor((args[0], args[0]))
-    else:
-        return InternalTensor((args[0], args[1]))
-
-
-def check(contents: str):
-    tree = ast.parse(contents)
-    checker = TorchChecker()
-    result = checker.visit(tree)
-
-
-CONSTANT_TYPE_MAP = {int: InternalInt, float: InternalFloat}
-
-
-METHOD_MAP = {
-    "zeros": constructor,
-    "ones": constructor,
-    "arange": arange_type,
-    "range": range_type,
-    "eye": eye_type,
-}
-
-
-BIN_OP_MAP = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-}
-
-# if isinstance(node.op, ast.Add):
-#             new_type = left_type + right_type
-#         elif isinstance(node.op, ast.Sub):
-#             new_type = left_type - right_type
-#         elif isinstance(node.op, ast.Mult):
-#             new_type = left_type * right_type
-#         elif isinstance(node.op, ast.Div):
-#             new_type = left_type / right_type
-#         else:
-#             raise TypeError
+if __name__ == "__main__":
+    # Pyre is extremely finicky about the paths you pass to it: they have to match a particular syntax
+    code_path = Path("tests") / "test_files"
+    paths = ["bin_op.py"]
+    # f = (code_path / paths[0]).open().read()
+    # cache = TypeInferenceProvider.gen_cache(Path(code_path), paths, None)
+    check_file(code_path / paths[0])

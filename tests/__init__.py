@@ -1,6 +1,6 @@
 from pathlib import Path
 
-TEST_FOLDER = Path(__file__).parent
+TEST_FOLDER = Path(__file__).parent / "test_files"
 
 
 def code_to_file(code: str):

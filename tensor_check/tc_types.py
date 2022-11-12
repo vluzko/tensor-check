@@ -8,6 +8,10 @@ class Predicate:
     pass
 
 
+class Self(Predicate):
+    pass
+
+
 class Equal(Predicate):
     lhs: Any
     rhs: Any
@@ -18,7 +22,7 @@ class Equal(Predicate):
 
 
 class ChkType:
-
+    attributes: Dict[str, "ChkType"]
     constraints: List[Predicate]
 
     def __add__(self, other: Any):

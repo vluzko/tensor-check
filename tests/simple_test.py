@@ -1,29 +1,30 @@
 """Basic tests that the checker runs correctly."""
 from pathlib import Path
-from dim_checker import checker
+from tensor_check import checker
 
-TEST_FOLDER = Path(__file__).parent
+TEST_FOLDER = Path(__file__).parent / "test_files"
+
+
+def test_const():
+    f = TEST_FOLDER / "const.py"
+    res = checker.check_file(f)
 
 
 def test_bin_op():
     f = TEST_FOLDER / "bin_op.py"
-    contents = f.open().read()
-    checker.check(contents)
+    res = checker.check_file(f)
 
 
 def test_def_and_call():
     f = TEST_FOLDER / "def_and_call.py"
-    contents = f.open().read()
-    checker.check(contents)
+    res = checker.check_file(f)
 
 
 def test_class_and_obj():
     f = TEST_FOLDER / "class_and_obj.py"
-    contents = f.open().read()
-    checker.check(contents)
+    res = checker.check_file(f)
 
 
 def test_module():
-    f = TEST_FOLDER / "example_nn_module.py"
-    contents = f.open().read()
-    checker.check(contents)
+    f = TEST_FOLDER / "nn_module.py"
+    res = checker.check_file(f)

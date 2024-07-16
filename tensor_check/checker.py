@@ -10,13 +10,15 @@ from tensor_check import pyre_utils, tc_types, torch_annotations
 
 
 class Scope:
+    """A scope. Tracks declarations of names."""
+
     parent_scope: Optional["Scope"]
     names: Dict[str, cst.CSTNode]
 
-    def __init__(self, parent: Optional["Scope"] = None):
+    def __init__(self, parent_scope: Optional["Scope"] = None):
         # TODO: Needs to be an ordered dict
         self.names = {}
-        self.parent = parent
+        self.parent_scope = parent_scope
 
     def __contains__(self, key: str) -> bool:
         return key in self.names
@@ -35,6 +37,8 @@ class Scope:
 
 
 class Context:
+    """A context. Tracks scopes and types."""
+
     scopes: List[Scope]
     types: Dict[cst.CSTNode, tc_types.ChkType]
     imports: Any
@@ -72,6 +76,9 @@ class Context:
         else:
             return self.types[node]
 
+    def get_all_types(self, scope: int):
+        return {k: self.lookup_name(k, scope) for k in self.scopes[scope].all_names()}
+
 
 class Checker(cst.CSTVisitor):
     """Type checker
@@ -91,6 +98,7 @@ class Checker(cst.CSTVisitor):
             ): x
             for x in self.types_cache
         }
+        print(self.by_position)
         self.ctx = Context()
 
     def visit_Assign(self, node: cst.Assign):
@@ -143,9 +151,7 @@ class Checker(cst.CSTVisitor):
         assert isinstance(node.left, cst.Name)
         assert isinstance(node.right, cst.Name)
         base_type = copy(l_type)
-        base_type.constraints = [
-            tc_types.Equal(tc_types.Self(), f"{node.left.value} + {node.right.value}")
-        ]
+        base_type.constraints = [tc_types.Equal(tc_types.Self(), f"{node.left.value} + {node.right.value}")]
         self.ctx.add_type(node, base_type)
 
     def visit_Integer(self, node: cst.Integer) -> None:
@@ -182,9 +188,12 @@ def check_file(path: Path):
         f = path.open().read()
         module = cst.parse_module(f)
         wrapper = cst.MetadataWrapper(module)
-        checker = Checker(pyre_types[str(path)])
+        checker = Checker(pyre_types)
         wrapper.visit(checker)
         print(checker.ctx)
+        import pdb
+
+        pdb.set_trace()
         return checker.ctx
 
 

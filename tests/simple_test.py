@@ -17,3 +17,11 @@ def test_integers():
     z_type = context.lookup_name("z")
     assert isinstance(z_type, tc_types.InternalInt)
     assert z_type.constraints == [tc_types.Equal(tc_types.Self(), "x + y")]
+
+
+def test_tensors():
+    f = TEST_FOLDER / "torch_arithmetic.py"
+    ctx = checker.check_file(f)
+    import pdb
+
+    pdb.set_trace()

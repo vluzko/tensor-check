@@ -9,10 +9,8 @@ from typing import Dict, List, Tuple
 
 
 PyreLC = TypedDict("PyreLC", {"line": int, "column": int})
-PyreLocation = TypedDict("PyreLocation", {"start": PyreLC, "end": PyreLC})
-PyreAnnotation = TypedDict(
-    "PyreAnnotation", {"location": PyreLocation, "annotation": str}
-)
+PyreLocation = TypedDict("PyreLocation", {"start": PyreLC, "stop": PyreLC})
+PyreAnnotation = TypedDict("PyreAnnotation", {"location": PyreLocation, "annotation": str})
 PyreResponse = TypedDict("PyreResponse", {"path": str, "types": List[PyreAnnotation]})
 
 
@@ -56,7 +54,7 @@ def get_pyre_types(path: Path) -> Dict[str, List[PyreAnnotation]]:  # type: igno
         resp: List[PyreResponse] = json.loads(stdout)["response"]  # type: ignore
         result = {str(Path(x["path"]).absolute()): x["types"] for x in resp}
         # TODO: Store file level cache (or some other less brittle solution)
-        cache[str(path.absolute())] = result
+        cache.update(result)
         pickle.dump(cache, cache_path.open("wb"))
         return result
 
@@ -66,5 +64,5 @@ def pyre_location_to_tuple(
 ) -> Tuple[Tuple[int, int], Tuple[int, int]]:
     loc = x["location"]
     start = loc["start"]["line"], loc["start"]["column"]
-    end = loc["end"]["line"], loc["end"]["column"]
+    end = loc["stop"]["line"], loc["stop"]["column"]
     return start, end
